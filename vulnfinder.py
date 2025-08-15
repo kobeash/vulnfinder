@@ -1,26 +1,25 @@
 #!/usr/bin/env python3
 """
-vulnfinder.py - simple aggregator to find public vulnerabilities for a product+version.
-
-Usage:
-    python vulnfinder.py apache 1.8.5
-    python vulnfinder.py "apache httpd" 2.4.54 --exploits --json
-Notes:
-    - Optional environment variable NVD_API_KEY can be set for higher NVD rate limits.
-    - If 'searchsploit' is installed, use --exploits to include Exploit-DB matches.
+vulnfinder.py - Aggregates public vulnerabilities for a product+version.
+Features:
+- OSV (Open Source Vulnerabilities)
+- NVD (National Vulnerability Database) with CVSS & exploitability
+- Local searchsploit (optional)
+- JSON / CSV output
+- Clean CLI table using Rich
 """
 
 from __future__ import annotations
 import argparse
 import os
 import json
+import csv
 import time
 import shutil
 import subprocess
-import requests
-import csv
 from pathlib import Path
 from datetime import datetime, timedelta
+import requests
 from rich.console import Console
 from rich.table import Table
 
@@ -31,7 +30,7 @@ OSV_API = "https://api.osv.dev/v1/query"
 NVD_CPE_API = "https://services.nvd.nist.gov/rest/json/cpes/2.0"
 NVD_CVE_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 CACHE_PATH = Path.home() / ".vulnfinder_cache.json"
-CACHE_TTL_HOURS = 12  # simple cache to avoid hammering APIs
+CACHE_TTL_HOURS = 12
 
 console = Console()
 
@@ -61,7 +60,6 @@ def cache_get(key: str):
         return None
     ts = datetime.fromisoformat(entry.get("_ts"))
     if datetime.utcnow() - ts > timedelta(hours=CACHE_TTL_HOURS):
-        # expired
         cache.pop(key, None)
         save_cache(cache)
         return None
@@ -93,10 +91,27 @@ def query_osv(product: str, version: str | None):
         vulns = data.get("vulns", []) or []
         out = []
         for v in vulns:
+            cvss_score = None
+            severity = None
+            for sev in v.get("severity", []):
+                if sev.get("type") in ["CVSS_V3", "CVSSv3"]:
+                    cvss_score = float(sev.get("score", 0))
+                    if cvss_score >= 9:
+                        severity = "Critical"
+                    elif cvss_score >= 7:
+                        severity = "High"
+                    elif cvss_score >= 4:
+                        severity = "Medium"
+                    else:
+                        severity = "Low"
+                    break
             out.append({
                 "id": v.get("id"),
                 "summary": v.get("summary") or (v.get("details") or "")[:400],
                 "published": v.get("published"),
+                "cvss_score": cvss_score,
+                "severity": severity,
+                "exploitability": "Unknown",
                 "references": [ref.get("url") for ref in v.get("references", []) if ref.get("url")]
             })
         cache_set(key, out)
@@ -105,7 +120,7 @@ def query_osv(product: str, version: str | None):
         return []
 
 # ---------------------------
-# Helpers to find CPE strings
+# Helpers
 # ---------------------------
 def find_cpe_strings(obj):
     results = set()
@@ -131,7 +146,6 @@ def search_nvd(product: str, version: str | None):
 
     apikey = os.getenv("NVD_API_KEY")
     headers = {"apiKey": apikey} if apikey else {}
-
     query = f"{product} {version}" if version else product
     params = {"keywordSearch": query, "resultsPerPage": 200}
 
@@ -140,15 +154,14 @@ def search_nvd(product: str, version: str | None):
         r.raise_for_status()
         data = r.json()
         products = data.get("products") or []
-
         cpe_candidates = set()
         for p in products:
             cpe_candidates |= find_cpe_strings(p)
         if not cpe_candidates and version:
-            r2 = requests.get(NVD_CPE_API, params={"keywordSearch": product, "resultsPerPage": 200}, headers=headers, timeout=20)
+            params2 = {"keywordSearch": product, "resultsPerPage": 200}
+            r2 = requests.get(NVD_CPE_API, params=params2, headers=headers, timeout=20)
             if r2.ok:
-                data2 = r2.json()
-                for p in (data2.get("products") or []):
+                for p in (r2.json().get("products") or []):
                     cpe_candidates |= find_cpe_strings(p)
 
         cves = {}
@@ -175,18 +188,36 @@ def search_nvd(product: str, version: str | None):
                             href = rref.get("url") or rref.get("reference_data", {}).get("url")
                             if href:
                                 refs.append(href)
-                    if not refs and isinstance(vuln.get("cve", {}).get("references"), list):
-                        for rref in vuln.get("cve", {}).get("references", []):
-                            if isinstance(rref, dict):
-                                href = rref.get("url")
-                                if href:
-                                    refs.append(href)
+                    # CVSS severity
+                    severity = None
+                    cvss_score = None
+                    metrics = cve_obj.get("metrics", {})
+                    exploitability = "Unknown"
+                    if "cvssMetricV31" in metrics:
+                        cvss = metrics["cvssMetricV31"][0]["cvssData"]
+                        cvss_score = float(cvss.get("baseScore", 0))
+                        if cvss_score >= 9: severity = "Critical"
+                        elif cvss_score >= 7: severity = "High"
+                        elif cvss_score >= 4: severity = "Medium"
+                        else: severity = "Low"
+                        av = cvss.get("attackVector")
+                        ac = cvss.get("attackComplexity")
+                        if av == "NETWORK" and ac == "LOW":
+                            exploitability = "Easy"
+                        else:
+                            exploitability = "Moderate/Hard"
                     if cve_id:
-                        cves[cve_id] = {"id": cve_id, "description": desc, "references": refs}
+                        cves[cve_id] = {
+                            "id": cve_id,
+                            "description": desc,
+                            "references": refs,
+                            "severity": severity,
+                            "cvss_score": cvss_score,
+                            "exploitability": exploitability
+                        }
                 time.sleep(0.15)
             except Exception:
                 continue
-
         out = list(cves.values())
         cache_set(key, out)
         return out
@@ -199,53 +230,55 @@ def search_nvd(product: str, version: str | None):
 def run_searchsploit(product: str, version: str | None):
     prog = shutil.which("searchsploit")
     if not prog:
-        return None, "searchsploit not found on PATH"
+        return None, "searchsploit not found"
     query = product + ((" " + version) if version else "")
     try:
-        p = subprocess.run([prog, "--color", "never", query],
-                           capture_output=True, text=True, timeout=20)
+        p = subprocess.run([prog, "--color", "never", query], capture_output=True, text=True, timeout=20)
         out = p.stdout.strip()
-        if not out:
-            return [], ""
-        return out.splitlines(), ""
+        return out.splitlines() if out else [], ""
     except Exception as e:
         return None, str(e)
 
 # ---------------------------
-# Printing / table helpers
+# CLI table printing
 # ---------------------------
-def print_candidates_table(source_name: str, items):
+def print_table(source_name: str, items):
     if not items:
         console.print(f"[{source_name}] No results found.")
         return
-    table = Table(title=f"{source_name} Vulnerabilities", show_lines=True)
+    table = Table(title=f"{source_name} vulnerabilities")
     table.add_column("ID", style="cyan", no_wrap=True)
-    table.add_column("Description", style="white")
-    table.add_column("References", style="magenta")
+    table.add_column("Severity", style="red")
+    table.add_column("Exploitability", style="green")
+    table.add_column("Description")
     for it in items:
-        cid = it.get("id") or it.get("cve") or "?"
-        desc = (it.get("summary") or it.get("description") or "").replace("\n"," ")[:300]
-        refs = "\n".join(it.get("references", [])[:5])
-        table.add_row(cid, desc, refs)
+        table.add_row(
+            it.get("id") or "?",
+            it.get("severity") or "-",
+            it.get("exploitability") or "-",
+            (it.get("summary") or it.get("description") or "")[:100]
+        )
     console.print(table)
 
 # ---------------------------
-# CSV export
+# CSV Output
 # ---------------------------
-def export_csv(filename: str, results: dict):
-    try:
-        with open(filename, "w", newline="", encoding="utf-8") as f:
-            writer = csv.writer(f)
-            writer.writerow(["Source", "CVE/ID", "Description", "References"])
-            for source, items in results.get("sources", {}).items():
-                if isinstance(items, list):
-                    for it in items:
-                        writer.writerow([source, it.get("id") or it.get("cve") or "?", 
-                                         it.get("summary") or it.get("description") or "", 
-                                         "; ".join(it.get("references", []))])
-        console.print(f"[green]CSV saved to {filename}[/green]")
-    except Exception as e:
-        console.print(f"[red]Error saving CSV:[/red] {e}")
+def save_csv(filename: str, results: dict):
+    with open(filename, "w", newline="", encoding="utf-8") as f:
+        writer = csv.writer(f)
+        writer.writerow(["source","id","severity","cvss_score","exploitability","description","references"])
+        for source, items in results["sources"].items():
+            for it in items:
+                writer.writerow([
+                    source,
+                    it.get("id") or "",
+                    it.get("severity") or "",
+                    it.get("cvss_score") or "",
+                    it.get("exploitability") or "",
+                    it.get("summary") or it.get("description") or "",
+                    ", ".join(it.get("references") or [])
+                ])
+    console.print(f"[CSV] Saved to {filename}")
 
 # ---------------------------
 # CLI
@@ -256,51 +289,44 @@ def main():
     ap.add_argument("version", nargs="?", default=None, help="Product version (optional)")
     ap.add_argument("-e", "--exploits", action="store_true", help="Run local searchsploit")
     ap.add_argument("-j", "--json", action="store_true", help="Emit JSON")
-    ap.add_argument("-c", "--csv", metavar="FILE", help="Export results to CSV")
+    ap.add_argument("-c", "--csv", help="Save CSV output")
     args = ap.parse_args()
 
     product = args.product.strip()
     version = args.version.strip() if args.version else None
+    console.print(f"Searching vulnerabilities for: product='{product}' version='{version or 'any'}' ...")
 
-    console.print(f"[bold]Searching vulnerabilities for:[/bold] product='{product}' version='{version or 'any'}' ...")
+    results = {"query": {"product": product, "version": version}, "timestamp": datetime.utcnow().isoformat(), "sources": {}}
 
-    results = {"query": {"product": product, "version": version}, 
-               "timestamp": datetime.utcnow().isoformat(), "sources": {}}
-
-    # OSV
     osv = query_osv(product, version)
     results["sources"]["osv"] = osv
-    print_candidates_table("OSV", osv)
+    print_table("OSV", osv)
 
-    # NVD
     nvd = search_nvd(product, version)
     results["sources"]["nvd"] = nvd
-    print_candidates_table("NVD", nvd)
+    print_table("NVD", nvd)
 
-    # searchsploit
     if args.exploits:
         ss_out, ss_err = run_searchsploit(product, version)
         if ss_out is None:
-            console.print(f"[red][searchsploit] error: {ss_err}[/red]")
+            console.print(f"[searchsploit] Error: {ss_err}")
             results["sources"]["searchsploit_error"] = ss_err
         else:
             results["sources"]["searchsploit"] = ss_out
-            console.print("\n[searchsploit] raw results (first 20 lines):")
-            for i, line in enumerate(ss_out):
-                if i >= 20:
-                    console.print("  ...")
-                    break
-                console.print(f"  {line}")
+            table = Table(title="searchsploit raw output")
+            table.add_column("Line")
+            for line in ss_out[:20]:
+                table.add_row(line)
+            if len(ss_out) > 20:
+                table.add_row("...")
+            console.print(table)
 
-    # JSON output
     if args.json:
         print(json.dumps(results, indent=2))
-
-    # CSV export
     if args.csv:
-        export_csv(args.csv, results)
+        save_csv(args.csv, results)
 
-    console.print(f"\nDone. Use --json or --csv to save raw results.")
+    console.print("\nDone. Use -j for JSON or -c <file.csv> to save raw results.")
     console.print(f"Cache path: {CACHE_PATH} (ttl {CACHE_TTL_HOURS}h)")
 
 if __name__ == "__main__":
