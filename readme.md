@@ -27,16 +27,16 @@ git clone https://github.com/kobeash/vulnfinder
 cd vulnfinder
 ```
 
-2. Install dependencies:
+2. Install dependencies locally into the `deps` folder:
 
 ```bash
 pip install --upgrade --target=./deps -r requirements.txt
-
 ```
 
 > Requirements:
 > - `requests`
 > - `rich` (optional, for nicer CLI output)
+> - `typer`
 
 3. (Optional) Install `searchsploit` if you want local Exploit-DB integration:
 
@@ -52,10 +52,12 @@ export NVD_API_KEY="your_api_key_here"
 
 ---
 
-## Usage
+## Running the Tool
+
+A helper script `run_vulnfinder.sh` is provided to automatically use the local dependencies:
 
 ```bash
-python vulnfinder.py <product> [version] [--exploits] [--json]
+./run_vulnfinder.sh <product> [version] [--exploits] [--json]
 ```
 
 ### Examples
@@ -63,25 +65,25 @@ python vulnfinder.py <product> [version] [--exploits] [--json]
 - Search Apache vulnerabilities (any version):
 
 ```bash
-python vulnfinder.py apache
+./run_vulnfinder.sh apache
 ```
 
 - Search a specific version of Apache HTTPD:
 
 ```bash
-python vulnfinder.py "apache httpd" 2.4.54
+./run_vulnfinder.sh "apache httpd" 2.4.54
 ```
 
 - Include local `searchsploit` results:
 
 ```bash
-python vulnfinder.py apache 1.8.5 --exploits
+./run_vulnfinder.sh apache 1.8.5 --exploits
 ```
 
 - Output results in JSON format:
 
 ```bash
-python vulnfinder.py "apache httpd" 2.4.54 --json
+./run_vulnfinder.sh "apache httpd" 2.4.54 --json
 ```
 
 ---
@@ -107,5 +109,16 @@ python vulnfinder.py "apache httpd" 2.4.54 --json
 - The tool is read-only and does not exploit vulnerabilities.
 - JSON output is suitable for automation or integration with other tools.
 - CLI output is designed for quick human inspection.
+- Dependencies are installed locally in `deps` to avoid system-wide installation.
 
+---
 
+## License
+
+MIT License © Your Name
+
+---
+
+## Contribution
+
+Contributions, suggestions, and improvements are welcome! Feel free to submit issues or pull requests.
