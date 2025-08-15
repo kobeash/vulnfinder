@@ -30,7 +30,8 @@ cd vulnfinder
 2. Install dependencies:
 
 ```bash
-pip install -r requirements.txt
+pip install --upgrade --target=./deps -r requirements.txt
+
 ```
 
 > Requirements:
