@@ -1,4 +1,4 @@
-```markdown
+
 # VulnFinder
 
 **VulnFinder** is a simple Python-based vulnerability aggregator that helps you find public vulnerabilities for a given product and version. It queries multiple sources including [OSV](https://osv.dev), [NVD](https://nvd.nist.gov), and optionally local Exploit-DB (via `searchsploit`).
