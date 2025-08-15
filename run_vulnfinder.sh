@@ -1,2 +1,5 @@
-echo 'PYTHONPATH=./deps python3 vulnfinder.py "$@"' > run_vulnfinder.sh
-chmod +x run_vulnfinder.sh
+#!/bin/bash
+# run_vulnfinder.sh
+
+# Use local deps folder
+PYTHONPATH="$(pwd)/deps" python3 vulnfinder.py "$@"
