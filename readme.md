@@ -1,3 +1,4 @@
+```markdown
 # VulnFinder
 
 **VulnFinder** is a simple Python-based vulnerability aggregator that helps you find public vulnerabilities for a given product and version. It queries multiple sources including [OSV](https://osv.dev), [NVD](https://nvd.nist.gov), and optionally local Exploit-DB (via `searchsploit`).
@@ -6,13 +7,13 @@
 
 ## Features
 
-- Query vulnerabilities by product name and optional version.
+- Query vulnerabilities by **product name** and **optional version**.
 - Aggregates results from multiple sources:
   - **OSV** (Open Source Vulnerabilities)
   - **NVD** (National Vulnerability Database)
-  - **Searchsploit** (local Exploit-DB, optional)
+  - **Searchsploit** (local Exploit-DB, optional, table-formatted output)
 - Simple caching to avoid repeated API calls.
-- Optional JSON output for further processing.
+- Optional JSON or CSV output for automation.
 - Works with both exact and fuzzy product names.
 - Handles API rate limits gracefully.
 
@@ -27,16 +28,13 @@ git clone https://github.com/kobeash/vulnfinder
 cd vulnfinder
 ```
 
-2. Install dependencies locally into the `deps` folder:
+2. Install dependencies **locally in `deps` folder** (no system-wide install needed):
 
 ```bash
 pip install --upgrade --target=./deps -r requirements.txt
 ```
 
-> Requirements:
-> - `requests`
-> - `rich` (optional, for nicer CLI output)
-> - `typer`
+> Requirements: `requests`, `rich` (for CLI tables)
 
 3. (Optional) Install `searchsploit` if you want local Exploit-DB integration:
 
@@ -52,38 +50,40 @@ export NVD_API_KEY="your_api_key_here"
 
 ---
 
-## Running the Tool
+## Usage
 
-A helper script `run_vulnfinder.sh` is provided to automatically use the local dependencies:
+Use the wrapper script `run_vulnfinder.sh`:
 
 ```bash
-./run_vulnfinder.sh <product> [version] [--exploits] [--json]
+./run_vulnfinder.sh <product> <version> [options]
 ```
+
+### Options
+
+- `-e, --exploits` → Run local searchsploit  
+- `-j, --json` → Output results in JSON  
+- `--csv` → Export results to CSV  
 
 ### Examples
 
-- Search Apache vulnerabilities (any version):
-
 ```bash
-./run_vulnfinder.sh apache
-```
+# Basic product + version
+./run_vulnfinder.sh "Apache" "1.3.20"
 
-- Search a specific version of Apache HTTPD:
+# Product with space in name
+./run_vulnfinder.sh "Apache httpd" "2.4.54"
 
-```bash
-./run_vulnfinder.sh "apache httpd" 2.4.54
-```
+# Include local searchsploit (table output)
+./run_vulnfinder.sh "Apache" "1.3.20" -e
 
-- Include local `searchsploit` results:
+# JSON output
+./run_vulnfinder.sh "Apache" "1.3.20" -j
 
-```bash
-./run_vulnfinder.sh apache 1.8.5 --exploits
-```
+# CSV export
+./run_vulnfinder.sh "Apache" "1.3.20" --csv
 
-- Output results in JSON format:
-
-```bash
-./run_vulnfinder.sh "apache httpd" 2.4.54 --json
+# Combined
+./run_vulnfinder.sh "Apache httpd" "2.4.54" -e -j --csv
 ```
 
 ---
@@ -91,34 +91,22 @@ A helper script `run_vulnfinder.sh` is provided to automatically use the local d
 ## Caching
 
 - Cache is stored at `~/.vulnfinder_cache.json`.
-- Default TTL is 12 hours to reduce repeated API calls.
+- Default TTL is 12 hours.
 - Can be safely deleted to force fresh queries.
 
 ---
 
 ## Sources
 
-- **OSV**: Queries vulnerabilities using package URLs (`pkg:generic/...`) via [OSV API](https://api.osv.dev/).
-- **NVD**: Uses CPE and CVE APIs to find vulnerabilities.
-- **Searchsploit**: Queries local Exploit-DB installation for matching exploits.
+- **OSV**: Queries vulnerabilities via package URLs (`pkg:generic/...`) using [OSV API](https://api.osv.dev/).  
+- **NVD**: Uses CPE and CVE APIs to find vulnerabilities.  
+- **Searchsploit**: Queries local Exploit-DB installation for matching exploits and displays in a **table format** for readability.
 
 ---
 
 ## Notes
 
-- The tool is read-only and does not exploit vulnerabilities.
-- JSON output is suitable for automation or integration with other tools.
+- The tool is read-only and does **not exploit vulnerabilities**.  
+- JSON/CSV output is suitable for automation or integration with other tools.  
 - CLI output is designed for quick human inspection.
-- Dependencies are installed locally in `deps` to avoid system-wide installation.
-
----
-
-## License
-
-MIT License © Your Name
-
----
-
-## Contribution
-
-Contributions, suggestions, and improvements are welcome! Feel free to submit issues or pull requests.
+```
