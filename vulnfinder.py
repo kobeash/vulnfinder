@@ -8,7 +8,7 @@ Usage:
 
 Notes:
     - Optional environment variable NVD_API_KEY can be set for higher NVD rate limits.
-    - If 'searchsploit' is installed, use --exploits to include Exploit-DB matches.
+    - If 'searchsploit' is installed, use --exploits to include Exploit-DB results.
 """
 
 from __future__ import annotations
@@ -23,6 +23,11 @@ from pathlib import Path
 from datetime import datetime, timedelta, timezone
 import csv
 
+from rich.console import Console
+from rich.table import Table
+
+console = Console()
+
 # ---------------------------
 # Config
 # ---------------------------
@@ -30,10 +35,10 @@ OSV_API = "https://api.osv.dev/v1/query"
 NVD_CPE_API = "https://services.nvd.nist.gov/rest/json/cpes/2.0"
 NVD_CVE_API = "https://services.nvd.nist.gov/rest/json/cves/2.0"
 CACHE_PATH = Path.home() / ".vulnfinder_cache.json"
-CACHE_TTL_HOURS = 12  # simple cache to avoid hammering APIs
+CACHE_TTL_HOURS = 12  # simple cache
 
 # ---------------------------
-# Simple JSON cache
+# Cache
 # ---------------------------
 def load_cache() -> dict:
     if not CACHE_PATH.exists():
@@ -58,7 +63,6 @@ def cache_get(key: str):
         return None
     ts = datetime.fromisoformat(entry.get("_ts"))
     if datetime.now(timezone.utc) - ts.replace(tzinfo=timezone.utc) > timedelta(hours=CACHE_TTL_HOURS):
-        # expired
         cache.pop(key, None)
         save_cache(cache)
         return None
@@ -105,21 +109,10 @@ def search_nvd(product: str, version: str | None):
     if cached is not None:
         return cached
 
-    apikey = os.getenv('NVD_API_KEY')
-    headers = {'apiKey': apikey} if apikey else {}
-    query = f"{product} {version}" if version else product
-    params = {'keywordSearch': query, 'resultsPerPage': 200}
-
-    try:
-        r = requests.get(NVD_CPE_API, params=params, headers=headers, timeout=20)
-        r.raise_for_status()
-        data = r.json()
-        # simplified: not doing full CPE -> CVE resolution
-        cves = []
-        cache_set(key, cves)
-        return cves
-    except Exception:
-        return []
+    # simplified: you can expand CPE->CVE resolution here
+    cves = []
+    cache_set(key, cves)
+    return cves
 
 # ---------------------------
 # searchsploit
@@ -135,6 +128,26 @@ def run_searchsploit(product: str, version: str | None):
         return out, ''
     except Exception as e:
         return None, str(e)
+
+# ---------------------------
+# Pretty table for searchsploit
+# ---------------------------
+def print_searchsploit_table(lines):
+    if not lines:
+        print("[searchsploit] No results found.")
+        return
+    table = Table(show_header=True, header_style="bold cyan")
+    table.add_column("EDB-ID", style="bold")
+    table.add_column("Title")
+    table.add_column("Type")
+    for line in lines:
+        parts = line.split(maxsplit=2)
+        if len(parts) == 3:
+            edb_id, title, type_ = parts
+        else:
+            edb_id, title, type_ = line, "", ""
+        table.add_row(edb_id, title, type_)
+    console.print(table)
 
 # ---------------------------
 # CLI output
@@ -202,9 +215,8 @@ def main():
             results['sources']['searchsploit_error'] = ss_err
         else:
             results['sources']['searchsploit'] = ss_out
-            print("\n[searchsploit] raw results (first 20 lines):")
-            for i, line in enumerate(ss_out[:20]):
-                print("  " + line)
+            print("\n[searchsploit] results:")
+            print_searchsploit_table(ss_out[:20])
             if len(ss_out) > 20:
                 print("  ...")
 
