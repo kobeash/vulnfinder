@@ -18,7 +18,7 @@ import time
 import shutil
 import subprocess
 from pathlib import Path
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 import requests
 from rich.console import Console
 from rich.table import Table
@@ -59,7 +59,7 @@ def cache_get(key: str):
     if not entry:
         return None
     ts = datetime.fromisoformat(entry.get("_ts"))
-    if datetime.utcnow() - ts > timedelta(hours=CACHE_TTL_HOURS):
+    if datetime.utcnow().replace(tzinfo=timezone.utc) - ts.replace(tzinfo=timezone.utc) > timedelta(hours=CACHE_TTL_HOURS):
         cache.pop(key, None)
         save_cache(cache)
         return None
@@ -67,7 +67,7 @@ def cache_get(key: str):
 
 def cache_set(key: str, value):
     cache = load_cache()
-    cache[key] = {"_ts": datetime.utcnow().isoformat(), "value": value}
+    cache[key] = {"_ts": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(), "value": value}
     save_cache(cache)
 
 # ---------------------------
@@ -96,14 +96,10 @@ def query_osv(product: str, version: str | None):
             for sev in v.get("severity", []):
                 if sev.get("type") in ["CVSS_V3", "CVSSv3"]:
                     cvss_score = float(sev.get("score", 0))
-                    if cvss_score >= 9:
-                        severity = "Critical"
-                    elif cvss_score >= 7:
-                        severity = "High"
-                    elif cvss_score >= 4:
-                        severity = "Medium"
-                    else:
-                        severity = "Low"
+                    if cvss_score >= 9: severity = "Critical"
+                    elif cvss_score >= 7: severity = "High"
+                    elif cvss_score >= 4: severity = "Medium"
+                    else: severity = "Low"
                     break
             out.append({
                 "id": v.get("id"),
@@ -225,17 +221,27 @@ def search_nvd(product: str, version: str | None):
         return []
 
 # ---------------------------
-# searchsploit
+# searchsploit (fixed)
 # ---------------------------
 def run_searchsploit(product: str, version: str | None):
+    """
+    Run local searchsploit and return list of exploits.
+    product + version are combined into a single query string.
+    """
     prog = shutil.which("searchsploit")
     if not prog:
         return None, "searchsploit not found"
-    query = product + ((" " + version) if version else "")
+
+    query_terms = [product]
+    if version:
+        query_terms.append(version)
+
     try:
-        p = subprocess.run([prog, "--color", "never", query], capture_output=True, text=True, timeout=20)
-        out = p.stdout.strip()
-        return out.splitlines() if out else [], ""
+        p = subprocess.run([prog, *query_terms], capture_output=True, text=True, timeout=30)
+        if p.returncode != 0:
+            return None, p.stderr.strip()
+        lines = [line.strip() for line in p.stdout.splitlines() if line.strip()]
+        return lines, ""
     except Exception as e:
         return None, str(e)
 
@@ -296,7 +302,7 @@ def main():
     version = args.version.strip() if args.version else None
     console.print(f"Searching vulnerabilities for: product='{product}' version='{version or 'any'}' ...")
 
-    results = {"query": {"product": product, "version": version}, "timestamp": datetime.utcnow().isoformat(), "sources": {}}
+    results = {"query": {"product": product, "version": version}, "timestamp": datetime.utcnow().replace(tzinfo=timezone.utc).isoformat(), "sources": {}}
 
     osv = query_osv(product, version)
     results["sources"]["osv"] = osv
